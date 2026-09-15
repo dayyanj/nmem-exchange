@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nmem-exchange"
+version = "0.1.0"
+description = "Pluggable, end-to-end-secured message bus for nmem agents"
+requires-python = ">=3.11"
+dependencies = [
+    "pynacl>=1.5.0",
+    "redis[hiredis]>=5.0.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["nmem_exchange*"]

@@ -1,0 +1,34 @@
+# nmem-exchange config (EXAMPLE). Each agent has its own copy.
+# Secrets stay OUT of this file: the Redis URL (with password) and the keyfile
+# path are supplied via env / a private file (see exchange.env), and the private
+# keyfile itself is git-ignored.
+
+exchange:
+  identity:
+    agent_id: agent-a
+    keyfile: /path/to/agent-a.key.json   # PRIVATE (0600), git-ignored
+
+  transport:
+    kind: redis                     # redis | memory
+    url: ${NMEX_REDIS_URL}          # redis://:<pw>@<redis-host>:6379/0  (from exchange.env)
+
+  ts_window_s: 300                  # reject messages older/newer than this (replay/clock guard)
+
+  # Trusted peers (allowlist) — PUBLIC keys only. A message signed by a key not
+  # listed here is rejected. Populate from each agent's keygen "PUBLIC bundle".
+  keyring:
+    agent-a: { sign_pub: "<b64>", box_pub: "<b64>" }
+    agent-b: { sign_pub: "<b64>", box_pub: "<b64>" }
+
+  # Channels: everything is a channel. policy = encrypted (rostered E2E) | open
+  # (signed plaintext). roster = member agent_ids (their keys come from keyring).
+  channels:
+    "dm:agent-a:agent-b":
+      policy: encrypted
+      roster: [agent-a, agent-b]
+    "grp:council":
+      policy: encrypted
+      roster: [agent-a, agent-b]    # add more agents here to widen the group
+    "open:lobby":
+      policy: open
+      roster: [agent-a, agent-b]

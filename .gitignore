@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+# PRIVATE keyfiles — never commit an agent's secret keys
+*.key.json
+*.keyfile.json
+keys/
+# secrets / transient
+.env
+*.env
+tools/review_findings.json
