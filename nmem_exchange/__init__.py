@@ -12,4 +12,4 @@ from nmem_exchange.crypto import (   # noqa: F401
     verify_sig,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
