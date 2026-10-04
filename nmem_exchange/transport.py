@@ -4,6 +4,7 @@ carries opaque envelope blobs (ciphertext + wrapped keys for encrypted channels)
 Transport interface:
   - publish(channel, blob)         — fan a blob out to every subscriber of channel
   - subscribe(channel, group, cb)  — deliver every blob on channel to THIS member
+  - unsubscribe(channel, group)    — stop THIS member's consumer for channel (idempotent)
   - close()
 
 RedisTransport: one stream per channel (`nmex:ch:{channel}`); each member reads it
@@ -26,7 +27,9 @@ class RedisTransport:
         self._url = url
         self._maxlen = maxlen
         self._redis = None
-        self._tasks: list[asyncio.Task] = []
+        # Keyed by (channel, group) so a single channel's consumer can be cancelled on unsubscribe
+        # (dynamic-room leave) without touching the others. close() still cancels every task.
+        self._tasks: dict[tuple[str, str], asyncio.Task] = {}
 
     async def _client(self):
         if self._redis is None:
@@ -39,7 +42,11 @@ class RedisTransport:
         await r.xadd(STREAM_PREFIX + channel, {"env": blob}, maxlen=self._maxlen, approximate=True)
 
     async def subscribe(self, channel: str, group: str, cb):
-        """Start a background consumer: group=agent_id so each member gets a copy."""
+        """Start a background consumer: group=agent_id so each member gets a copy. Idempotent per
+        (channel, group) — a second subscribe for a channel already consumed is a no-op (so a
+        dynamic add_channel can't spawn a duplicate reader)."""
+        if (channel, group) in self._tasks:
+            return
         r = await self._client()
         stream = STREAM_PREFIX + channel
         try:
@@ -72,15 +79,28 @@ class RedisTransport:
                     log.warning("[nmex] read loop error", exc_info=True)
                     await asyncio.sleep(1.0)
 
-        self._tasks.append(asyncio.create_task(_loop()))
+        self._tasks[(channel, group)] = asyncio.create_task(_loop())
+
+    async def unsubscribe(self, channel: str, group: str):
+        """Cancel THIS member's consumer for ``channel`` (idempotent). The Redis consumer group is left
+        in place — it's harmless and keeps re-subscribe cheap — we just stop reading."""
+        task = self._tasks.pop((channel, group), None)
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     async def close(self):
-        for t in self._tasks:
+        for t in list(self._tasks.values()):
             t.cancel()
             try:
                 await t
             except (asyncio.CancelledError, Exception):
                 pass
+        self._tasks.clear()
         if self._redis is not None:
             await self._redis.aclose()
 
@@ -90,13 +110,17 @@ class InMemoryTransport:
     subscriber on a channel gets every published blob (consumer-group fan-out)."""
     def __init__(self):
         self._subs: dict[str, list[asyncio.Queue]] = {}
-        self._tasks: list[asyncio.Task] = []
+        # (channel, group) -> (queue, task), so unsubscribe can drop THIS member's queue + reader
+        # for one channel without disturbing other subscribers (dynamic-room leave).
+        self._tasks: dict[tuple[str, str], tuple[asyncio.Queue, asyncio.Task]] = {}
 
     async def publish(self, channel: str, blob: bytes):
         for q in self._subs.get(channel, []):
             q.put_nowait(blob)
 
     async def subscribe(self, channel: str, group: str, cb):
+        if (channel, group) in self._tasks:   # idempotent per (channel, group)
+            return
         q: asyncio.Queue = asyncio.Queue()
         self._subs.setdefault(channel, []).append(q)
 
@@ -108,15 +132,32 @@ class InMemoryTransport:
                 except Exception:
                     log.warning("[nmex] handler error", exc_info=True)
 
-        self._tasks.append(asyncio.create_task(_loop()))
+        self._tasks[(channel, group)] = (q, asyncio.create_task(_loop()))
+
+    async def unsubscribe(self, channel: str, group: str):
+        """Drop THIS member's queue + reader for ``channel`` (idempotent)."""
+        entry = self._tasks.pop((channel, group), None)
+        if entry is None:
+            return
+        q, task = entry
+        try:
+            self._subs.get(channel, []).remove(q)
+        except ValueError:
+            pass
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
 
     async def close(self):
-        for t in self._tasks:
+        for _q, t in list(self._tasks.values()):
             t.cancel()
             try:
                 await t
             except (asyncio.CancelledError, Exception):
                 pass
+        self._tasks.clear()
 
 
 def build_transport(cfg: dict):

@@ -31,6 +31,9 @@ class Exchange:
         self._seen: "collections.OrderedDict" = collections.OrderedDict()
         self._dedup_max = dedup_max
         self._handler = None
+        # Channels this member has a live transport consumer for. start() populates it; add_channel /
+        # remove_channel keep it in sync so a runtime (un)subscribe is idempotent and reversible.
+        self._subscribed: set[str] = set()
 
     async def send(self, channel: str, kind: str, body, in_reply_to: str | None = None) -> str:
         ch = self.channels[channel]
@@ -50,13 +53,47 @@ class Exchange:
     async def start(self, handler):
         """handler(meta: dict, body: bytes) — awaited per accepted inbound message."""
         self._handler = handler
-        for ch_id, ch in self.channels.items():
+        for ch_id, ch in list(self.channels.items()):
             if self.id.agent_id in ch.get("roster", []):
-                # Bind the delivery channel into the callback so we can reject an
-                # envelope the broker injected into the wrong stream.
-                await self.transport.subscribe(
-                    ch_id, self.id.agent_id,
-                    lambda blob, ch_id=ch_id: self._on_blob(ch_id, blob))
+                await self._subscribe(ch_id)
+
+    async def _subscribe(self, ch_id: str) -> None:
+        """Subscribe this member's consumer to ``ch_id`` (idempotent). Binds the delivery channel into
+        the callback so we can reject an envelope the broker injected into the wrong stream."""
+        if ch_id in self._subscribed:
+            return
+        await self.transport.subscribe(
+            ch_id, self.id.agent_id,
+            lambda blob, ch_id=ch_id: self._on_blob(ch_id, blob))
+        self._subscribed.add(ch_id)
+
+    async def add_channel(self, ch_id: str, policy: str, roster) -> None:
+        """Dynamically add (or update) a channel at runtime — the group-chat v2 join/create path. Sets
+        ``channels[ch_id]`` to the given policy + roster and, if this member is in the roster, brings up
+        a live consumer. Idempotent: re-adding an already-subscribed channel just refreshes its roster.
+        No-op before start() has run with a handler bound (the initial start() will subscribe it)."""
+        roster = sorted({str(a) for a in (roster or [])})
+        self.channels[ch_id] = {"policy": policy, "roster": roster}
+        if self.id.agent_id in roster and self._handler is not None:
+            await self._subscribe(ch_id)
+
+    async def remove_channel(self, ch_id: str) -> None:
+        """Dynamically drop a channel at runtime — the leave path. Cancels this member's consumer and
+        forgets the channel config, so later posts/receives on it are no longer accepted. Idempotent."""
+        if ch_id in self._subscribed:
+            try:
+                await self.transport.unsubscribe(ch_id, self.id.agent_id)
+            finally:
+                self._subscribed.discard(ch_id)
+        self.channels.pop(ch_id, None)
+
+    def update_roster(self, ch_id: str, roster) -> None:
+        """Replace a channel's roster in place (a membership change that doesn't add/remove self). The
+        roster drives both the encrypted send-wrap recipients and the receive-path authorization check,
+        so every member must learn a new peer's join before it will accept that peer's messages."""
+        ch = self.channels.get(ch_id)
+        if ch is not None:
+            ch["roster"] = sorted({str(a) for a in (roster or [])})
 
     async def _on_blob(self, ch_id, blob):
         if blob is None:
