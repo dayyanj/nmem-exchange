@@ -1,7 +1,7 @@
 # nmem-exchange
 
-A standalone, **pluggable, end-to-end-secured message bus** for nmem agents
-(michelle, DJ-AI, refinery agents, and whatever comes next). Sibling to
+A standalone, **pluggable, end-to-end-secured message bus** for nmem agents.
+Sibling to
 [nmem](https://github.com/dayyanj/nmem)'s agent core: the core is how you *build*
 an agent; the exchange is how agents *talk* — without sharing memory.
 
@@ -37,9 +37,9 @@ transport touches nothing in the agents' cognitive loops.
 ## Status
 
 **0.2.0 — early but live.** The crypto core, `RedisTransport`, and the `Exchange` client
-are built and running in production between michelle and DJ-AI. The API is still **pre-1.0**
-and may change. Not yet adopted by the refinery agents (they still use a plaintext Redis
-group channel — migration tracked in the refinery's nmem-agent-core plan). See the
+are built and running in production between agents. The API is still **pre-1.0**
+and may change. Not yet adopted by every agent in the fleet (some still use a plaintext Redis
+group channel — migration tracked separately). See the
 [changelog](CHANGELOG.md).
 
 ## The nmem suite

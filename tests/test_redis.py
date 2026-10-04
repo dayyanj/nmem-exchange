@@ -1,7 +1,7 @@
 """Live RedisTransport round-trip: two agents over the REAL dedicated Redis do an
 encrypted DM. Needs NMEX_REDIS_URL in the env.
 
-  set -a; source ~/michelle/exchange.env; set +a
+  set -a; source ~/agent_m/exchange.env; set +a
   python tests/test_redis.py
 """
 import asyncio

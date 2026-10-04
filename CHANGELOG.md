@@ -6,7 +6,7 @@ All notable changes to nmem-exchange are documented here. Format follows
 ## [0.2.0] — 2026-09-08
 
 **Transport hardened and live between agents.** Still pre-1.0 (the API may move), but the
-bus now runs in production between michelle and DJ-AI.
+bus now runs in production between agents.
 
 ### Added
 

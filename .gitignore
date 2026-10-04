@@ -11,3 +11,9 @@ keys/
 .env
 *.env
 tools/review_findings.json
+
+# Claude Code local guidance (not public)
+CLAUDE.md
+
+# Internal working docs — never publish to the public repo.
+.dev_docs/
