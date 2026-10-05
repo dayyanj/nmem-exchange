@@ -12,5 +12,19 @@ dependencies = [
     "redis[hiredis]>=5.0.0",
 ]
 
+[project.optional-dependencies]
+# The read-only room observer (dashboard + persistent, searchable history). The core bus needs
+# neither a web server nor YAML; the observer pulls them in only when you run it.
+observer = [
+    "aiohttp>=3.9",
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+nmem-exchange-observer = "nmem_exchange.observer.__main__:main"
+
 [tool.setuptools.packages.find]
 include = ["nmem_exchange*"]
+
+[tool.setuptools.package-data]
+nmem_exchange = ["observer/dashboard.html"]

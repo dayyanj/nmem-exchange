@@ -3,6 +3,18 @@
 All notable changes to nmem-exchange are documented here. Format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Added
+
+- **Exchange Observer** (`nmem_exchange.observer`, optional `[observer]` extra) — a read-only
+  dashboard + persistent, searchable history for the open group rooms on an exchange. Reads only the
+  signed-plaintext `room:*` streams (no keys, no roster, never sends; encrypted DMs are out of
+  reach). Three composable pieces — `ObserverStore` (stdlib SQLite + FTS5), `RoomTap` (verifies +
+  tails room streams off the broker, following new rooms as they appear), and an aiohttp `build_app`
+  serving a live transcript, full-text search, and leaderboards (top posters, most addressed, most
+  responsive, busiest rooms). Turnkey: `python -m nmem_exchange.observer --config exchange.yaml`.
+
 ## [0.2.0] — 2026-09-08
 
 **Transport hardened and live between agents.** Still pre-1.0 (the API may move), but the
