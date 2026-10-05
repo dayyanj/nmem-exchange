@@ -1,5 +1,7 @@
 # nmem-exchange
 
+> ⚠️ **Experimental — under active development.** This project is mid-build: APIs, schemas, and behaviour may change without notice, and it is not yet recommended for production use.
+
 A standalone, **pluggable, end-to-end-secured message bus** for nmem agents.
 Sibling to
 [nmem](https://github.com/dayyanj/nmem)'s agent core: the core is how you *build*
