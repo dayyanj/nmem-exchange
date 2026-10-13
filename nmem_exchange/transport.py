@@ -23,9 +23,23 @@ STREAM_PREFIX = "nmex:ch:"
 
 
 class RedisTransport:
-    def __init__(self, url: str, *, maxlen: int = 10000):
+    def __init__(self, url: str, *, maxlen: int = 10000, max_connections: int = 512,
+                 pool_timeout: float = 20.0):
         self._url = url
         self._maxlen = maxlen
+        # Each subscribe() runs a dedicated consumer loop parked in a BLOCKING xreadgroup(block=...),
+        # which holds one pool connection for its whole window — so an agent needs ~one connection per
+        # channel it consumes (rooms + DMs). redis-py's from_url pool defaults to max_connections=100;
+        # once that's exceeded every further read raises MaxConnectionsError, caught by the loop's own
+        # except/sleep(1)/retry — so the reader doesn't die, it SPIN-RETRIES ~1/s and never delivers
+        # (messages pile up unacked, presence looks offline). So: (1) a generous ceiling well above real
+        # channel counts, and (2) a BLOCKING pool, so transient contention WAITS for a free connection
+        # (up to pool_timeout) instead of erroring. NOTE this raises the ceiling, it is not the
+        # architectural fix — connections still scale with channel count; bounding room sprawl +
+        # multiplexing reads per group is the durable fix. Sized against the broker's own maxclients
+        # (fleet agents × this ceiling must stay well under it).
+        self._max_connections = max(1, int(max_connections))
+        self._pool_timeout = float(pool_timeout)
         self._redis = None
         # Keyed by (channel, group) so a single channel's consumer can be cancelled on unsubscribe
         # (dynamic-room leave) without touching the others. close() still cancels every task.
@@ -34,7 +48,12 @@ class RedisTransport:
     async def _client(self):
         if self._redis is None:
             import redis.asyncio as aioredis
-            self._redis = aioredis.from_url(self._url)
+            from redis.asyncio import BlockingConnectionPool
+            pool = BlockingConnectionPool.from_url(
+                self._url, max_connections=self._max_connections, timeout=self._pool_timeout)
+            # from_pool (NOT Redis(connection_pool=...)) so the client OWNS the pool and close()'s
+            # aclose() tears its connections down — otherwise an explicit pool leaks on close.
+            self._redis = aioredis.Redis.from_pool(pool)
         return self._redis
 
     async def publish(self, channel: str, blob: bytes):
@@ -65,10 +84,20 @@ class RedisTransport:
                             blob = fields.get(b"env") or fields.get("env")
                             try:
                                 await cb(blob)
+                            except asyncio.CancelledError:
+                                raise                      # a cancel mid-handler must NOT be acked
                             except Exception:
                                 log.warning("[nmex] handler error", exc_info=True)
-                            finally:
+                            # ACK after the handler has settled (success OR a logged error — same drop-on-
+                            # processed semantics as before). Moved out of `finally` + cancellation-aware so
+                            # an xack failure (e.g. a pool-timeout ConnectionError under contention) can't
+                            # mask a pending CancelledError and resurrect a cancelled reader.
+                            try:
                                 await r.xack(stream, group, msg_id)
+                            except asyncio.CancelledError:
+                                raise
+                            except Exception:
+                                log.warning("[nmex] xack failed", exc_info=True)
                 except asyncio.CancelledError:
                     raise
                 except Exception as e:
@@ -165,5 +194,7 @@ def build_transport(cfg: dict):
     if kind == "memory":
         return InMemoryTransport()
     if kind == "redis":
-        return RedisTransport(cfg["url"], maxlen=int(cfg.get("maxlen", 10000)))
+        return RedisTransport(cfg["url"], maxlen=int(cfg.get("maxlen", 10000)),
+                              max_connections=int(cfg.get("max_connections", 512)),
+                              pool_timeout=float(cfg.get("pool_timeout", 20.0)))
     raise ValueError(f"unknown transport kind: {kind}")
