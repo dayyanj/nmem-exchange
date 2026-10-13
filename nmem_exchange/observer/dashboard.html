@@ -262,7 +262,8 @@
     var box=document.getElementById("rooms"); box.innerHTML="";
     if(!rooms.length){ box.appendChild(el("div","empty","No open rooms observed yet.")); return; }
     rooms.forEach(function(r){
-      var lab=roomLabel(r.room);
+      // Prefer the real room name (from a room.meta beacon); fall back to the id-derived hint.
+      var lab = r.name ? {name:r.name, by:roomLabel(r.room).by} : roomLabel(r.room);
       var btn=el("button","roomrow"); btn.type="button"; btn.setAttribute("data-room",r.room);
       if(r.room===selectedRoom) btn.setAttribute("aria-current","true");
       var nm=el("div","nm"); nm.appendChild(el("b",null,"# "+esc(lab.name))); btn.appendChild(nm);

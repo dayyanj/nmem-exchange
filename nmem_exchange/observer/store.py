@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS rooms (
   room       TEXT PRIMARY KEY,
   first_seen REAL NOT NULL,
   last_seen  REAL NOT NULL,
-  post_count INTEGER NOT NULL DEFAULT 0
+  post_count INTEGER NOT NULL DEFAULT 0,
+  name       TEXT
 );
 """
 
@@ -100,6 +101,11 @@ class ObserverStore:
         self._lock = threading.Lock()
         with self._lock:
             self._db.executescript(_SCHEMA)
+            # Migrate pre-existing DBs: CREATE TABLE IF NOT EXISTS won't add rooms.name to an old table.
+            try:
+                self._db.execute("ALTER TABLE rooms ADD COLUMN name TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already present
             self._db.commit()
 
     # ── write ─────────────────────────────────────────────────────
@@ -130,12 +136,24 @@ class ObserverStore:
             self._db.commit()
             return True
 
+    def set_room_name(self, *, room: str, name: str, ts: float) -> None:
+        """Record a room's human NAME (from a ``room.meta`` beacon). Upserts the room row so a named
+        room is labelled even before its first message; never touches post_count/last_seen ordering."""
+        if not room or not name:
+            return
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO rooms (room, first_seen, last_seen, post_count, name) VALUES (?,?,?,0,?) "
+                "ON CONFLICT(room) DO UPDATE SET name=excluded.name",
+                (room, float(ts), float(ts), name))
+            self._db.commit()
+
     # ── read ──────────────────────────────────────────────────────
     def rooms(self) -> list[dict[str, Any]]:
         """Every room seen, busiest/most-recent first, with its distinct posters."""
         with self._lock:
             rows = self._db.execute(
-                "SELECT room, first_seen, last_seen, post_count FROM rooms "
+                "SELECT room, first_seen, last_seen, post_count, name FROM rooms "
                 "ORDER BY last_seen DESC").fetchall()
             out = []
             for r in rows:

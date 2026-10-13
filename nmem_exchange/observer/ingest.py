@@ -29,7 +29,8 @@ from nmem_exchange.transport import STREAM_PREFIX
 log = logging.getLogger(__name__)
 
 ROOM_CHANNEL_PREFIX = "room:"
-GROUP_MSG_KIND = "group.msg"          # mirrors agent_core.group.KIND_GROUP_MSG (the only room traffic)
+GROUP_MSG_KIND = "group.msg"          # mirrors agent_core.group.KIND_GROUP_MSG
+ROOM_META_KIND = "room.meta"          # mirrors room_registry.KIND_ROOM_META — a room's human-name beacon
 
 
 def _is_timeout(e: Exception) -> bool:
@@ -78,6 +79,44 @@ def decode_room_envelope(env: dict, keyring: dict, *, expected_channel: str | No
         "ts": float(env.get("ts") or 0.0),
         "text": text,
         "in_reply_to": env.get("in_reply_to"),
+    }
+
+
+def decode_room_meta(env: dict, keyring: dict, *, expected_channel: str | None = None) -> dict:
+    """Verify + unpack one OPEN ``room.meta`` envelope into ``{room, name, policy, created_by, ts}``.
+
+    Same trust boundary as :func:`decode_room_envelope` (known signer, valid signature, open, a room
+    channel matching the stream) but for the human-name beacon rather than a chat message. Raises
+    :class:`EnvelopeRejected` for anything we must not trust."""
+    if not isinstance(env, dict):
+        raise EnvelopeRejected("not an envelope")
+    sender = env.get("from")
+    peer = keyring.get(sender)
+    if peer is None:
+        raise EnvelopeRejected(f"sender {sender!r} not in keyring")
+    if not crypto.verify_sig(env, peer["sign_pub"]):
+        raise EnvelopeRejected("bad signature")
+    if env.get("enc") != "none":
+        raise EnvelopeRejected("not an open (plaintext) envelope")
+    if env.get("kind") != ROOM_META_KIND:
+        raise EnvelopeRejected(f"not a room-meta beacon (kind={env.get('kind')!r})")
+    channel = env.get("channel") or ""
+    if expected_channel is not None and channel != expected_channel:
+        raise EnvelopeRejected(f"channel mismatch: signed {channel!r} on {expected_channel!r}")
+    if not channel.startswith(ROOM_CHANNEL_PREFIX):
+        raise EnvelopeRejected(f"not a room channel ({channel!r})")
+    try:
+        payload = json.loads(crypto._b64d(env["pt"]).decode("utf-8", errors="replace"))
+    except Exception as e:  # noqa: BLE001
+        raise EnvelopeRejected(f"undecodable meta body: {e}") from e
+    if not isinstance(payload, dict):
+        raise EnvelopeRejected("meta body is not an object")
+    return {
+        "room": channel[len(ROOM_CHANNEL_PREFIX):],
+        "name": str(payload.get("name") or ""),
+        "policy": str(payload.get("policy") or ""),
+        "created_by": str(payload.get("created_by") or ""),
+        "ts": float(env.get("ts") or 0.0),
     }
 
 
@@ -156,6 +195,19 @@ class RoomTap:
         try:
             env = json.loads(blob)
         except Exception:  # noqa: BLE001
+            return
+        loop = asyncio.get_running_loop()
+        # Room-name beacon: label the room (no message recorded), so the dashboard shows the human name
+        # instead of the opaque <creator>-<hex> id.
+        if isinstance(env, dict) and env.get("kind") == ROOM_META_KIND:
+            try:
+                meta = decode_room_meta(env, self._keyring, expected_channel=channel)
+            except EnvelopeRejected as e:
+                log.debug("[observer] dropped meta on %s: %s", channel, e)
+                return
+            if meta["name"]:
+                await loop.run_in_executor(None, lambda: self._store.set_room_name(
+                    room=meta["room"], name=meta["name"], ts=meta["ts"]))
             return
         try:
             rec = decode_room_envelope(env, self._keyring, expected_channel=channel)

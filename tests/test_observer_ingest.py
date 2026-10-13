@@ -84,3 +84,37 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+def _meta_env(sender, name, *, channel="room:michelle-abc123", kind="room.meta", msg_id="x1"):
+    import json
+    body = json.dumps({"room_id": channel.split(":", 1)[1], "name": name,
+                       "policy": "open", "created_by": "agent-a"})
+    return crypto.seal_open(sender, body.encode(), channel=channel, kind=kind,
+                            msg_id=msg_id, ts=time.time())
+
+
+def test_decode_room_meta_valid():
+    from nmem_exchange.observer.ingest import decode_room_meta
+    env = _meta_env(A, "embedding-inhibition-analysis")
+    m = decode_room_meta(env, KEYRING, expected_channel="room:michelle-abc123")
+    assert m["room"] == "michelle-abc123"
+    assert m["name"] == "embedding-inhibition-analysis"
+
+
+def test_decode_room_meta_rejects_wrong_kind_and_signer():
+    from nmem_exchange.observer.ingest import decode_room_meta
+    # a group.msg is not a meta beacon
+    try:
+        decode_room_meta(_meta_env(A, "x", kind="group.msg"), KEYRING,
+                         expected_channel="room:michelle-abc123")
+        assert False, "wrong kind should be rejected"
+    except EnvelopeRejected:
+        pass
+    # unknown signer
+    stranger = crypto.generate_identity("agent-x")
+    try:
+        decode_room_meta(_meta_env(stranger, "x"), KEYRING, expected_channel="room:michelle-abc123")
+        assert False, "unknown signer should be rejected"
+    except EnvelopeRejected:
+        pass
