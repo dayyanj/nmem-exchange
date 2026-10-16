@@ -86,11 +86,11 @@ if __name__ == "__main__":
 
 def test_set_room_name_labels_room_and_survives_messages():
     s = ObserverStore(":memory:")
-    s.set_room_name(room="michelle-abc", name="embedding-inhibition-analysis", ts=1.0)
+    s.set_room_name(room="agent-a-abc", name="embedding-inhibition-analysis", ts=1.0)
     rooms = {r["room"]: r for r in s.rooms()}
-    assert rooms["michelle-abc"]["name"] == "embedding-inhibition-analysis"   # named before any message
-    assert rooms["michelle-abc"]["post_count"] == 0
-    s.record_message(msg_id="m1", room="michelle-abc", sender="agent-a", ts=2.0, text="hi", known_agents=KNOWN)
+    assert rooms["agent-a-abc"]["name"] == "embedding-inhibition-analysis"   # named before any message
+    assert rooms["agent-a-abc"]["post_count"] == 0
+    s.record_message(msg_id="m1", room="agent-a-abc", sender="agent-a", ts=2.0, text="hi", known_agents=KNOWN)
     rooms = {r["room"]: r for r in s.rooms()}
-    assert rooms["michelle-abc"]["name"] == "embedding-inhibition-analysis"   # name kept across a post
-    assert rooms["michelle-abc"]["post_count"] == 1
+    assert rooms["agent-a-abc"]["name"] == "embedding-inhibition-analysis"   # name kept across a post
+    assert rooms["agent-a-abc"]["post_count"] == 1
